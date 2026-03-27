@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import PostListPage from './pages/PostListPage';
 import PostDetailPage from './pages/PostDetailPage';
 import PostCreatePage from './pages/PostCreatePage';
@@ -7,7 +7,7 @@ import SignupPage from './pages/SignupPage';
 
 function App() {
   return (
-    <BrowserRouter basename='/my-community'>
+    <HashRouter>
       <Routes>
         <Route path='/' element={<PostListPage />} />
         <Route path='/posts/:id' element={<PostDetailPage />} />
@@ -16,7 +16,7 @@ function App() {
         <Route path='/signup' element={<SignupPage />} />
         <Route path='*' element={<Navigate to='/' replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
