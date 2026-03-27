@@ -4,15 +4,18 @@ import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
-import Paper from '@mui/material/Paper';
 import Divider from '@mui/material/Divider';
 import TextField from '@mui/material/TextField';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import DeleteIcon from '@mui/icons-material/Delete';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import Navbar from '../components/common/Navbar';
 import { supabase } from '../supabase';
 
@@ -24,6 +27,7 @@ function PostDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [post, setPost] = useState(null);
+  const [nickname, setNickname] = useState('');
   const [comments, setComments] = useState([]);
   const [likesCount, setLikesCount] = useState(0);
   const [liked, setLiked] = useState(false);
@@ -31,6 +35,7 @@ function PostDetailPage() {
   const [commentText, setCommentText] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -46,44 +51,38 @@ function PostDetailPage() {
 
   const fetchPost = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('posts')
-      .select('*, profiles(nickname)')
-      .eq('id', id)
-      .single();
+    const { data } = await supabase.from('posts').select('*').eq('id', id).single();
     if (data) {
       setPost(data);
-      // 조회수 증가
       await supabase.from('posts').update({ view_count: (data.view_count || 0) + 1 }).eq('id', id);
+
+      const { data: profile } = await supabase
+        .from('profiles').select('nickname').eq('id', data.user_id).single();
+      setNickname(profile?.nickname || 'Unknown');
     }
-
-    // 좋아요 수
     const { count } = await supabase
-      .from('likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('post_id', id);
+      .from('likes').select('*', { count: 'exact', head: true }).eq('post_id', id);
     setLikesCount(count || 0);
-
     setLoading(false);
   };
 
   const fetchComments = async () => {
-    const { data } = await supabase
-      .from('comments')
-      .select('*, profiles(nickname)')
-      .eq('post_id', id)
-      .order('created_at', { ascending: true });
-    setComments(data || []);
+    const { data: commentData } = await supabase
+      .from('comments').select('*').eq('post_id', id).order('created_at', { ascending: true });
+    if (!commentData || commentData.length === 0) { setComments([]); return; }
+
+    const userIds = [...new Set(commentData.map((c) => c.user_id))];
+    const { data: profiles } = await supabase.from('profiles').select('id, nickname').in('id', userIds);
+    const profileMap = {};
+    profiles?.forEach((p) => { profileMap[p.id] = p.nickname; });
+
+    setComments(commentData.map((c) => ({ ...c, nickname: profileMap[c.user_id] || 'Unknown' })));
   };
 
   const fetchLikeStatus = async () => {
     if (!user) return;
-    const { data } = await supabase
-      .from('likes')
-      .select('id')
-      .eq('post_id', id)
-      .eq('user_id', user.id)
-      .single();
+    const { data } = await supabase.from('likes').select('id')
+      .eq('post_id', id).eq('user_id', user.id).single();
     setLiked(!!data);
   };
 
@@ -104,11 +103,7 @@ function PostDetailPage() {
     if (!user) { navigate('/login'); return; }
     if (!commentText.trim()) return;
     setSubmitting(true);
-    await supabase.from('comments').insert({
-      post_id: id,
-      user_id: user.id,
-      content: commentText.trim(),
-    });
+    await supabase.from('comments').insert({ post_id: id, user_id: user.id, content: commentText.trim() });
     setCommentText('');
     await fetchComments();
     setSubmitting(false);
@@ -120,21 +115,20 @@ function PostDetailPage() {
   };
 
   const handlePostDelete = async () => {
-    if (!window.confirm('Delete this post?')) return;
     await supabase.from('posts').delete().eq('id', id);
     navigate('/');
   };
 
-  const formatDate = (dateStr) => {
-    return new Date(dateStr).toLocaleString('ko-KR');
-  };
+  const formatDate = (dateStr) => new Date(dateStr).toLocaleString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 
   if (loading) {
     return (
-      <Box sx={{ width: '100%', minHeight: '100vh' }}>
+      <Box sx={{ width: '100%', minHeight: '100vh', bgcolor: '#fafafa' }}>
         <Navbar />
-        <Box sx={{ display: 'flex', justifyContent: 'center', pt: 10 }}>
-          <CircularProgress sx={{ color: '#050505' }} />
+        <Box sx={{ display: 'flex', justifyContent: 'center', pt: 12 }}>
+          <CircularProgress size={28} sx={{ color: '#050505' }} />
         </Box>
       </Box>
     );
@@ -142,171 +136,243 @@ function PostDetailPage() {
 
   if (!post) {
     return (
-      <Box sx={{ width: '100%', minHeight: '100vh' }}>
+      <Box sx={{ width: '100%', minHeight: '100vh', bgcolor: '#fafafa' }}>
         <Navbar />
-        <Container maxWidth='md' sx={{ pt: 5, textAlign: 'center' }}>
-          <Typography>Post not found.</Typography>
-          <Button onClick={() => navigate('/')} sx={{ mt: 2 }}>Back to List</Button>
+        <Container maxWidth='md' sx={{ pt: 6, textAlign: 'center' }}>
+          <Typography color='text.secondary'>Post not found.</Typography>
+          <Button onClick={() => navigate('/')} sx={{ mt: 2, color: '#050505' }}>← Back to List</Button>
         </Container>
       </Box>
     );
   }
 
   return (
-    <Box sx={{ width: '100%', minHeight: '100vh', bgcolor: 'background.default' }}>
+    <Box sx={{ width: '100%', minHeight: '100vh', bgcolor: '#fafafa' }}>
       <Navbar />
-      <Container maxWidth='md' sx={{ py: { xs: 3, md: 5 } }}>
-        {/* 제목 + 목록으로 */}
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2, gap: 2 }}>
-          <Typography variant='h5' fontWeight={700} sx={{ flexGrow: 1 }}>
-            {post.title}
-          </Typography>
+      <Container maxWidth='md' sx={{ py: { xs: 4, md: 6 } }}>
+
+        {/* 상단 네비 */}
+        <Box sx={{ mb: 4 }}>
           <Button
-            startIcon={<ArrowBackIcon />}
+            startIcon={<ArrowBackIcon sx={{ fontSize: 16 }} />}
             onClick={() => navigate('/')}
-            variant='outlined'
-            size='small'
-            sx={{ flexShrink: 0, borderColor: '#050505', color: '#050505' }}
+            sx={{ color: '#999', fontSize: '0.82rem', p: 0, minWidth: 0, '&:hover': { color: '#050505', bgcolor: 'transparent' } }}
           >
             Back to List
           </Button>
         </Box>
 
-        {/* 메타데이터 */}
-        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Typography variant='body2' color='text.secondary'>
-            Author: <strong>{post.profiles?.nickname || 'Unknown'}</strong>
+        {/* 제목 영역 */}
+        <Box sx={{ mb: 3 }}>
+          <Typography variant='h5' fontWeight={700} sx={{ letterSpacing: -0.5, lineHeight: 1.4, mb: 2 }}>
+            {post.title}
           </Typography>
-          <Typography variant='body2' color='text.secondary'>
-            {formatDate(post.created_at)}
-          </Typography>
-          <Typography variant='body2' color='text.secondary'>
-            Views: {post.view_count}
-          </Typography>
-          <Typography variant='body2' color='text.secondary'>
-            Comments: {comments.length}
-          </Typography>
-          <Typography variant='body2' color='text.secondary'>
-            Likes: {likesCount}
-          </Typography>
-          {user && user.id === post.user_id && (
-            <Button
-              startIcon={<DeleteIcon />}
-              onClick={handlePostDelete}
-              size='small'
-              color='error'
-              sx={{ ml: 'auto' }}
-            >
-              Delete
-            </Button>
-          )}
+
+          {/* 메타 + 삭제 버튼 */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Typography variant='body2' fontWeight={600} sx={{ color: '#333' }}>
+                {nickname}
+              </Typography>
+              <Typography variant='caption' sx={{ color: '#aaa' }}>
+                {formatDate(post.created_at)}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1.5 }}>
+                <Typography variant='caption' sx={{ color: '#bbb' }}>
+                  Views {post.view_count}
+                </Typography>
+                <Typography variant='caption' sx={{ color: '#bbb' }}>
+                  Comments {comments.length}
+                </Typography>
+                <Typography variant='caption' sx={{ color: '#bbb' }}>
+                  Likes {likesCount}
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* 삭제 버튼 - 본인 글만 */}
+            {user && user.id === post.user_id && (
+              <Button
+                startIcon={<DeleteOutlineIcon sx={{ fontSize: 16 }} />}
+                onClick={() => setDeleteDialogOpen(true)}
+                size='small'
+                sx={{
+                  color: '#bbb',
+                  fontSize: '0.78rem',
+                  border: '1px solid #e5e5e5',
+                  px: 1.5,
+                  '&:hover': { color: '#d32f2f', borderColor: '#d32f2f', bgcolor: 'transparent' },
+                }}
+              >
+                Delete
+              </Button>
+            )}
+          </Box>
         </Box>
 
-        <Divider sx={{ mb: 3 }} />
+        <Divider sx={{ borderColor: '#050505', borderBottomWidth: 2, mb: 4 }} />
 
         {/* 본문 */}
-        <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, border: '1px solid #eee', mb: 3, minHeight: 200 }}>
+        <Box sx={{ minHeight: 200, mb: 5 }}>
           {post.thumbnail_url && (
             <Box
               component='img'
               src={post.thumbnail_url}
               alt='thumbnail'
-              sx={{ width: '100%', maxHeight: 400, objectFit: 'cover', borderRadius: 1, mb: 2 }}
+              sx={{ width: '100%', maxHeight: 420, objectFit: 'cover', borderRadius: 1, mb: 3 }}
             />
           )}
-          <Typography variant='body1' sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+          <Typography variant='body1' sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.9, color: '#222' }}>
             {post.content}
           </Typography>
-        </Paper>
+        </Box>
 
-        {/* 좋아요 버튼 */}
-        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 4 }}>
+        {/* 좋아요 */}
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 5 }}>
           <Box
+            onClick={handleLike}
             sx={{
-              display: 'flex',
-              flexDirection: 'column',
+              display: 'inline-flex',
               alignItems: 'center',
-              gap: 0.5,
+              gap: 1,
+              px: 3,
+              py: 1.2,
+              border: '1px solid',
+              borderColor: liked ? '#050505' : '#ddd',
+              borderRadius: 20,
+              cursor: 'pointer',
+              bgcolor: liked ? '#050505' : 'transparent',
+              transition: 'all 0.2s',
+              '&:hover': { borderColor: '#050505', bgcolor: liked ? '#222' : '#f5f5f5' },
             }}
           >
-            <IconButton
-              onClick={handleLike}
-              sx={{
-                border: '2px solid',
-                borderColor: liked ? '#e53935' : '#bbb',
-                color: liked ? '#e53935' : '#bbb',
-                width: 56,
-                height: 56,
-                '&:hover': { borderColor: '#e53935', color: '#e53935' },
-              }}
-            >
-              {liked ? <FavoriteIcon /> : <FavoriteBorderIcon />}
-            </IconButton>
-            <Typography variant='body2' fontWeight={600}>{likesCount}</Typography>
+            {liked
+              ? <FavoriteIcon sx={{ fontSize: 18, color: '#fff' }} />
+              : <FavoriteBorderIcon sx={{ fontSize: 18, color: '#555' }} />
+            }
+            <Typography variant='body2' fontWeight={600} sx={{ color: liked ? '#fff' : '#555' }}>
+              {likesCount}
+            </Typography>
           </Box>
         </Box>
 
-        <Divider sx={{ mb: 3 }} />
+        <Divider sx={{ mb: 4 }} />
 
-        {/* 댓글 영역 */}
-        <Typography variant='h6' fontWeight={600} mb={2}>
-          Comments ({comments.length})
+        {/* 댓글 */}
+        <Typography variant='body1' fontWeight={700} sx={{ mb: 3 }}>
+          Comments <Typography component='span' sx={{ color: '#aaa', fontWeight: 400, fontSize: '0.9rem' }}>({comments.length})</Typography>
         </Typography>
 
-        {/* 댓글 작성란 */}
-        <Box sx={{ display: 'flex', gap: 1, mb: 3 }}>
+        {/* 댓글 입력 */}
+        <Box sx={{ display: 'flex', gap: 1.5, mb: 4 }}>
           <TextField
             fullWidth
-            placeholder={user ? 'Write a comment...' : 'Login to write a comment'}
+            placeholder={user ? 'Leave a comment...' : 'Login to comment'}
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
             disabled={!user}
             size='small'
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCommentSubmit(); } }}
-            sx={{ '& .MuiOutlinedInput-root': { '&.Mui-focused fieldset': { borderColor: '#050505' } } }}
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 1,
+                '& fieldset': { borderColor: '#e5e5e5' },
+                '&:hover fieldset': { borderColor: '#aaa' },
+                '&.Mui-focused fieldset': { borderColor: '#050505', borderWidth: 1 },
+              },
+            }}
           />
           <Button
             variant='contained'
             onClick={handleCommentSubmit}
             disabled={!user || submitting}
-            sx={{ bgcolor: '#050505', '&:hover': { bgcolor: '#333' }, flexShrink: 0 }}
+            sx={{
+              bgcolor: '#050505',
+              '&:hover': { bgcolor: '#222' },
+              boxShadow: 'none',
+              flexShrink: 0,
+              px: 2.5,
+              fontSize: '0.82rem',
+            }}
           >
-            Submit
+            Post
           </Button>
         </Box>
 
         {/* 댓글 목록 */}
         {comments.length === 0 ? (
-          <Typography color='text.secondary' variant='body2'>No comments yet.</Typography>
+          <Typography variant='body2' sx={{ color: '#bbb', textAlign: 'center', py: 3 }}>
+            No comments yet.
+          </Typography>
         ) : (
           comments.map((comment) => (
-            <Paper
+            <Box
               key={comment.id}
-              elevation={0}
-              sx={{ p: 2, mb: 1, border: '1px solid #eee', borderRadius: 2 }}
+              sx={{
+                py: 2,
+                borderBottom: '1px solid #f0f0f0',
+                '&:last-child': { borderBottom: 'none' },
+              }}
             >
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <Box>
-                  <Typography variant='body1' sx={{ mb: 0.5 }}>{comment.content}</Typography>
-                  <Box sx={{ display: 'flex', gap: 1.5 }}>
-                    <Typography variant='caption' color='text.secondary' fontWeight={600}>
-                      {comment.profiles?.nickname || 'Unknown'}
+                <Box sx={{ flexGrow: 1 }}>
+                  <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 0.8 }}>
+                    <Typography variant='body2' fontWeight={600} sx={{ color: '#333' }}>
+                      {comment.nickname}
                     </Typography>
-                    <Typography variant='caption' color='text.secondary'>
+                    <Typography variant='caption' sx={{ color: '#bbb' }}>
                       {formatDate(comment.created_at)}
                     </Typography>
                   </Box>
+                  <Typography variant='body2' sx={{ color: '#444', lineHeight: 1.7 }}>
+                    {comment.content}
+                  </Typography>
                 </Box>
                 {user && user.id === comment.user_id && (
-                  <IconButton size='small' onClick={() => handleCommentDelete(comment.id)}>
-                    <DeleteIcon fontSize='small' sx={{ color: '#aaa' }} />
+                  <IconButton
+                    size='small'
+                    onClick={() => handleCommentDelete(comment.id)}
+                    sx={{ ml: 1, color: '#ddd', '&:hover': { color: '#d32f2f' } }}
+                  >
+                    <DeleteOutlineIcon fontSize='small' />
                   </IconButton>
                 )}
               </Box>
-            </Paper>
+            </Box>
           ))
         )}
       </Container>
+
+      {/* 삭제 확인 다이얼로그 */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        PaperProps={{ sx: { borderRadius: 2, px: 1, minWidth: 300 } }}
+      >
+        <DialogTitle sx={{ fontSize: '1rem', fontWeight: 700, pb: 1 }}>
+          Delete Post
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant='body2' color='text.secondary'>
+            Are you sure you want to delete this post? This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+          <Button
+            onClick={() => setDeleteDialogOpen(false)}
+            sx={{ color: '#888', fontSize: '0.82rem', border: '1px solid #e5e5e5', px: 2 }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handlePostDelete}
+            variant='contained'
+            sx={{ bgcolor: '#050505', '&:hover': { bgcolor: '#d32f2f' }, boxShadow: 'none', fontSize: '0.82rem', px: 2 }}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
