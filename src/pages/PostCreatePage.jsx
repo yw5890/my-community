@@ -40,7 +40,7 @@ function PostCreatePage() {
     }).select().single();
 
     setSubmitting(false);
-    if (!error && data) navigate(`/posts/${data.id}`);
+    if (!error && data) navigate('/');
   };
 
   return (
