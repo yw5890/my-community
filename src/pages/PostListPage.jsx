@@ -38,21 +38,50 @@ function PostListPage() {
     const from = (currentPage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data, count, error } = await supabase
+    // 게시물 목록
+    const { data, count } = await supabase
       .from('posts')
-      .select(`
-        id, title, thumbnail_url, view_count, created_at,
-        profiles(nickname),
-        comments(count),
-        likes(count)
-      `, { count: 'exact' })
+      .select('id, title, thumbnail_url, view_count, created_at, user_id', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 
-    if (!error) {
-      setPosts(data || []);
+    if (!data || data.length === 0) {
+      setPosts([]);
       setTotalCount(count || 0);
+      setLoading(false);
+      return;
     }
+
+    // 닉네임 조회
+    const userIds = [...new Set(data.map((p) => p.user_id))];
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, nickname')
+      .in('id', userIds);
+
+    const profileMap = {};
+    profiles?.forEach((p) => { profileMap[p.id] = p.nickname; });
+
+    // 댓글 수 조회
+    const postIds = data.map((p) => p.id);
+    const { data: commentRows } = await supabase
+      .from('comments')
+      .select('post_id')
+      .in('post_id', postIds);
+
+    const commentCountMap = {};
+    commentRows?.forEach((c) => {
+      commentCountMap[c.post_id] = (commentCountMap[c.post_id] || 0) + 1;
+    });
+
+    const enriched = data.map((post) => ({
+      ...post,
+      nickname: profileMap[post.user_id] || 'Unknown',
+      commentCount: commentCountMap[post.id] || 0,
+    }));
+
+    setPosts(enriched);
+    setTotalCount(count || 0);
     setLoading(false);
   };
 
@@ -171,7 +200,7 @@ function PostListPage() {
                 {/* 모바일 메타데이터 */}
                 <Box sx={{ display: { xs: 'flex', md: 'none' }, gap: 1.5, mt: 0.5 }}>
                   <Typography variant='caption' color='text.secondary'>
-                    {post.profiles?.nickname || 'Unknown'}
+                    {post.nickname}
                   </Typography>
                   <Typography variant='caption' color='text.secondary'>
                     {formatDate(post.created_at)}
@@ -183,7 +212,7 @@ function PostListPage() {
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3 }}>
                     <CommentIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
                     <Typography variant='caption' color='text.secondary'>
-                      {post.comments?.[0]?.count ?? 0}
+                      {post.commentCount}
                     </Typography>
                   </Box>
                 </Box>
@@ -192,7 +221,7 @@ function PostListPage() {
               {/* 데스크톱 메타데이터 */}
               <Box sx={{ width: 120, textAlign: 'center', display: { xs: 'none', md: 'block' } }}>
                 <Typography variant='body2' color='text.secondary' noWrap>
-                  {post.profiles?.nickname || 'Unknown'}
+                  {post.nickname}
                 </Typography>
               </Box>
               <Box sx={{ width: 100, textAlign: 'center', display: { xs: 'none', md: 'block' } }}>
@@ -207,7 +236,7 @@ function PostListPage() {
               <Box sx={{ width: 70, textAlign: 'center', display: { xs: 'none', md: 'flex' }, alignItems: 'center', justifyContent: 'center', gap: 0.3 }}>
                 <CommentIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                 <Typography variant='body2' color='text.secondary'>
-                  {post.comments?.[0]?.count ?? 0}
+                  {post.commentCount}
                 </Typography>
               </Box>
             </Paper>
